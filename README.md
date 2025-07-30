@@ -2,6 +2,8 @@
 
 **Status**: Under Development
 
+<img width="610" height="328" alt="image" src="https://github.com/user-attachments/assets/9b6cb728-117c-4f4e-b7de-2e142a578816" />
+
 ---
 
 ## Overview
@@ -25,6 +27,28 @@ The collision avoidance system processes video data through the following pipeli
 3.  **Object Detection & Segmentation:** YOLOv9T processes each frame to detect and draw bounding boxes around relevant objects.
 4.  **Dense Optical Flow:** PWC-Net calculates a dense optical flow field for the entire frame, providing a motion vector for each pixel.
 5.  **Time to Collision (TTC) Calculation:** For each detected object, a custom algorithm calculates the TTC based on the divergence of flow vectors and their magnitude. An Echo State Network (ESN) is also being developed for more robust TTC prediction.
+
+<img width="279" height="402" alt="image" src="https://github.com/user-attachments/assets/70f2b80b-2da8-4bc1-ae16-0df8d89ceb78" />
+
+
+```text
+Video Stream
+    ↓
+Object Detection (YOLOv9t)
+    ↓
+Object Tracking (Kalman Filter + Hungarian Matching)
+    ↓
+Optical Flow (PWCNet via PTLFlow)
+    ↓
+Ego Motion Correction
+    ↓
+TTC Estimation (Divergence / Flow / Looming)
+    ↓
+Collision Logic & ROI Check
+    ↓
+Annotated Output Frame
+```
+---
 
    
 ## Hardware and Software
@@ -58,29 +82,6 @@ The current focus is on hardware acceleration using Vitis HLS to optimize the mo
 
 We are actively exploring pipelining and parallelizing these operations to offload them from the CPU to the FPGA fabric.
 
-
----
-
-## System Architecture
-
-```text
-Video Stream
-    ↓
-Object Detection (YOLOv9t)
-    ↓
-Object Tracking (Kalman Filter + Hungarian Matching)
-    ↓
-Optical Flow (PWCNet via PTLFlow)
-    ↓
-Ego Motion Correction
-    ↓
-TTC Estimation (Divergence / Flow / Looming)
-    ↓
-Collision Logic & ROI Check
-    ↓
-Annotated Output Frame
-```
----
 
 ## Future Work
 
