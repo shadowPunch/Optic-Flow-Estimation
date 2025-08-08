@@ -62,7 +62,7 @@ Annotated Output Frame
 * **Frameworks:** PyTorch, CUDA
 * **FPGA Development:** Vitis HLS, Vitis AI
 
-## 🤖 Models and Algorithms
+## Models and Algorithms
 
 * **Object Detection:** **YOLOv9T** is chosen for its excellent balance of speed and accuracy.
 * **Optical Flow:** **PWC-Net** is used for its efficiency and high-quality flow estimations.
@@ -91,8 +91,6 @@ We are actively exploring pipelining and parallelizing these operations to offlo
 * Further refine the algorithms to improve accuracy and robustness.
 
 ## Other Contributors
-
-
 
 * Shyam B Ganesh (https://github.com/sh-yamm)
 * Tanmay S Kushwaha (https://github.com/Tanmay-S-Kushwaha)
