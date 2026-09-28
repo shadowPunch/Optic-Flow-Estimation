@@ -139,6 +139,18 @@ class PWCNetDPU(nn.Module):
         return flow
 
 
+DPU_LEAKY_SLOPE = 26 / 256  # the only LeakyReLU slope DPUCZDX8G implements (0.1015625)
+
+
+def set_leaky_slope(model: nn.Module, slope: float) -> nn.Module:
+    """PWC-Net is trained with slope 0.1; with 0.1 every conv+activation falls back to the CPU
+    on the DPU, so the deploy graph uses DPU_LEAKY_SLOPE (flow impact measured in the README)."""
+    for m in model.modules():
+        if isinstance(m, nn.LeakyReLU):
+            m.negative_slope = slope
+    return model
+
+
 def load_ptlflow_weights(model: PWCNetDPU, checkpoint: str = "things") -> PWCNetDPU:
     """Load the official ptlflow checkpoint (downloaded and cached by torch.hub)."""
     name = "pwcnet" if model.dc else "pwcnet_nodc"

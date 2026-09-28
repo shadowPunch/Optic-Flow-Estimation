@@ -18,7 +18,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+prune = ["torch-pruning==1.6.1"]
+dev = ["pytest>=8", "torch-pruning==1.6.1"]
 
 [project.scripts]
 collision-avoidance = "collision_avoidance.app:main"

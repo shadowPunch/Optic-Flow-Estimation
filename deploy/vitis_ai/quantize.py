@@ -53,7 +53,8 @@ class ModelSpec:
     def __init__(self, name: str, yolo_weights: str):
         self.name = name
         if name == "pwcnet":
-            self.model = pwcnet.load_ptlflow_weights(pwcnet.PWCNetDPU(dc=True), "things")
+            model = pwcnet.load_ptlflow_weights(pwcnet.PWCNetDPU(dc=True), "things")
+            self.model = pwcnet.set_leaky_slope(model, pwcnet.DPU_LEAKY_SLOPE)
             self.pairs = True
         else:
             import yolo_dpu  # needs ultralytics inside the docker

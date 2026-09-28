@@ -25,3 +25,7 @@ runs/
 
 # Pre-reconstruction ptlflow clone with the Nexar demo clips (kept locally; tests use 00049.mp4)
 PWC/
+
+# Vitis AI outputs (xmodels are build artifacts)
+deploy/vitis_ai/quantized*/
+deploy/vitis_ai/compiled/
