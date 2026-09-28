@@ -10,6 +10,8 @@ Deviations from the legacy script (both documented in README):
   * the rotational ego-flow has the correct sign for cv2's rotation matrix.
 """
 
+from functools import lru_cache
+
 import cv2
 import numpy as np
 
@@ -37,9 +39,24 @@ def _mse(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def estimate(prev_gray: np.ndarray, curr_gray: np.ndarray, cfg: EgoMotionConfig, rng: np.random.Generator) -> np.ndarray:
-    """Return (dx, dy, theta) such that warp(curr, params) ~= prev."""
+    """Return (dx, dy, theta) such that warp(curr, params) ~= prev.
+
+    The search runs on images downscaled by `cfg.downscale` (cost falls with the
+    square of the factor); translations are scaled back, rotation is scale-free.
+    """
+    d = cfg.downscale
+    if d > 1:
+        size = (prev_gray.shape[1] // d, prev_gray.shape[0] // d)
+        prev_gray = cv2.resize(prev_gray, size, interpolation=cv2.INTER_AREA)
+        curr_gray = cv2.resize(curr_gray, size, interpolation=cv2.INTER_AREA)
+    params = _search(prev_gray, curr_gray, cfg, rng, pixel_scale=1.0 / d)
+    params[:2] *= d
+    return params
+
+
+def _search(prev_gray, curr_gray, cfg: EgoMotionConfig, rng: np.random.Generator, pixel_scale: float) -> np.ndarray:
     n = cfg.num_candidates
-    t, r = cfg.translation_range_px, cfg.rotation_range_rad
+    t, r = cfg.translation_range_px * pixel_scale, cfg.rotation_range_rad
     candidates = rng.uniform([-t, -t, -r], [t, t, r], size=(n, 3))
     candidates[0] = 0.0  # always consider "no motion"
     # Rotation mutates on its own scale, as in the HLS port.
@@ -54,10 +71,16 @@ def estimate(prev_gray: np.ndarray, curr_gray: np.ndarray, cfg: EgoMotionConfig,
             best_mse, best_params = mses[order[0]], candidates[order[0]].copy()
         if best_mse < cfg.mse_threshold:
             break
-        mutated = elite + rng.normal(0.0, cfg.mutation_std, elite.shape) * mutation_scale
+        mutated = elite + rng.normal(0.0, cfg.mutation_std * pixel_scale, elite.shape) * mutation_scale
         crossover = (elite[::2] + elite[1::2]) / 2 if len(elite) >= 2 else elite
         candidates = np.vstack((elite, mutated, crossover))[:n]
     return best_params
+
+
+@lru_cache(maxsize=4)
+def _centred_grid(h: int, w: int) -> tuple[np.ndarray, np.ndarray]:
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
+    return xs - w // 2, ys - h // 2
 
 
 def ego_flow(params, shape_hw: tuple[int, int]) -> np.ndarray:
@@ -68,8 +91,7 @@ def ego_flow(params, shape_hw: tuple[int, int]) -> np.ndarray:
     """
     dx, dy, theta = params
     h, w = shape_hw
-    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
-    rel_x, rel_y = xs - w // 2, ys - h // 2
+    rel_x, rel_y = _centred_grid(h, w)
     flow = np.empty((h, w, 2), dtype=np.float32)
     flow[..., 0] = -dx - theta * rel_y
     flow[..., 1] = -dy + theta * rel_x

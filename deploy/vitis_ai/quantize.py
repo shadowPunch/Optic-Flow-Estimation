@@ -15,13 +15,16 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 import torch
 
-import pwcnet_dpu
+# The pipeline's PWC-Net module only needs torch/numpy, so it imports fine in the docker (py3.8).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from collision_avoidance import pwcnet  # noqa: E402
 
 HEIGHT, WIDTH = 384, 512
 TARGET = "DPUCZDX8G_ISA1_B4096"  # KV260; confirm with `xdputil query` on the board
@@ -50,7 +53,7 @@ class ModelSpec:
     def __init__(self, name: str, yolo_weights: str):
         self.name = name
         if name == "pwcnet":
-            self.model = pwcnet_dpu.load_ptlflow_weights(pwcnet_dpu.PWCNetDPU(dc=True), "things")
+            self.model = pwcnet.load_ptlflow_weights(pwcnet.PWCNetDPU(dc=True), "things")
             self.pairs = True
         else:
             import yolo_dpu  # needs ultralytics inside the docker
@@ -59,7 +62,7 @@ class ModelSpec:
 
     def to_input(self, sample) -> torch.Tensor:
         if self.pairs:
-            return pwcnet_dpu.preprocess(*sample, to_rgb=True)
+            return pwcnet.preprocess(*sample, to_rgb=True)
         import yolo_dpu
         return yolo_dpu.preprocess(sample[0])
 
@@ -68,7 +71,7 @@ class ModelSpec:
 
     def error(self, quant_out, float_out) -> dict[str, float]:
         if self.pairs:  # end-point error of the full-resolution flow
-            epe = torch.linalg.vector_norm(pwcnet_dpu.postprocess(quant_out) - pwcnet_dpu.postprocess(float_out), dim=1)
+            epe = torch.linalg.vector_norm(pwcnet.postprocess(quant_out) - pwcnet.postprocess(float_out), dim=1)
             return {"epe_vs_float": float(epe.mean())}
         diffs = [float((q - f).abs().mean()) for q, f in zip(quant_out, float_out)]
         return {"raw_head_mae_vs_float": float(np.mean(diffs))}

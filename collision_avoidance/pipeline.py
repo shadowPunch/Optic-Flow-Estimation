@@ -70,7 +70,7 @@ class CollisionPipeline:
         self.fps = fps
         self.ttc_estimator = ttc_estimator or HeuristicTtcEstimator(cfg.ttc)
         device = resolve_device(cfg.device)
-        self.flow = FlowEstimator(cfg.flow_model, cfg.flow_checkpoint, (cfg.frame_height, cfg.frame_width), device)
+        self.flow = FlowEstimator(cfg.flow_model, cfg.flow_checkpoint, (cfg.frame_height, cfg.frame_width), device, cfg.flow_backend)
         self.detector = Detector(cfg.yolo_weights, cfg.conf_threshold, device)
         self.tracker = Tracker(cfg.iou_threshold, cfg.max_track_lost)
         self.ego = EgoMotionEstimator(cfg.ego)

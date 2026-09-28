@@ -28,12 +28,13 @@ def test_compensation_removes_pure_ego_motion():
     np.testing.assert_allclose(ego_motion.compensate(flow, params), 0.0, atol=1e-5)
 
 
+@pytest.mark.parametrize("downscale", [1, 2])
 @pytest.mark.parametrize("true", [(2.0, -1.0, 0.0), (-1.5, 0.5, 0.01)])
-def test_genetic_search_recovers_camera_motion(true):
+def test_genetic_search_recovers_camera_motion(true, downscale):
     prev = textured_image()
     # curr is prev seen after the camera moved; warp(curr, true) should give prev back.
     curr = ego_motion.warp(prev, -np.array(true))
-    cfg = EgoMotionConfig(num_candidates=48, max_iterations=30, seed=1)
+    cfg = EgoMotionConfig(num_candidates=48, max_iterations=30, downscale=downscale, seed=1)
     est = ego_motion.estimate(prev, curr, cfg, np.random.default_rng(cfg.seed))
     assert est[:2] == pytest.approx(true[:2], abs=0.5)
     assert est[2] == pytest.approx(true[2], abs=0.01)

@@ -10,7 +10,7 @@ here has produced an `.xmodel` yet.
 
 | File | Purpose | Verified on host |
 |---|---|---|
-| `pwcnet_dpu.py` | PWC-DC-Net as a plain `nn.Module` (tensor in/out, `nn.Unfold` correlation) | output matches ptlflow `pwcnet` / `pwcnet_nodc` to mean EPE < 1e-3 (`tests/test_pwcnet_dpu.py`) |
+| `../../collision_avoidance/pwcnet.py` | PWC-DC-Net as a plain `nn.Module` (tensor in/out, `nn.Unfold` correlation); shared with the host pipeline, which uses it as its default flow backend | output matches ptlflow `pwcnet` / `pwcnet_nodc` to mean EPE < 1e-3 (`tests/test_pwcnet.py`) |
 | `yolo_dpu.py` | YOLOv9t graph up to the Detect-head convolutions; CPU decode + NMS | decoded output matches Ultralytics to 1e-3 (`tests/test_yolo_dpu.py`) |
 | `quantize.py` | `inspect` / `calib` / `test` (evaluate vs float + export xmodel) | data sampling and model wrappers smoke-tested; quantizer calls need the docker |
 | `compile.sh` | `vai_c_xir` for the KV260 arch + subgraph report | no |
@@ -74,8 +74,8 @@ road texture), but cropping to the left RGB panel is closer to deployment.
 
 | Model | GPU mean | CPU mean |
 |---|---|---|
-| ptlflow PWC-DC-Net (pipeline) | 42.9 ms | 182 ms |
-| DPU-graph PWC-DC-Net | 29.8 ms | 251 ms |
+| ptlflow PWC-DC-Net (reference) | 42.9 ms | 182 ms |
+| DPU-graph PWC-DC-Net (pipeline default) | 29.8 ms | 251 ms |
 | DPU-graph PWC-Net (no DC) | 25.1 ms | 209 ms |
 
 W&B run: `kria-collision-avoidance/uxtpuu6y`.

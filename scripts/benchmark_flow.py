@@ -1,27 +1,23 @@
 """Host latency of the float optical-flow models (no DPU available).
 
-Compares ptlflow's PWC-DC-Net (used by the pipeline) with the DPU-graph
-re-implementation, with and without the dilated context network, on GPU and CPU
-at the pipeline resolution. Results go to W&B (COLLISION_WANDB=0 to disable).
+Compares ptlflow's PWC-DC-Net (reference) with the native DPU-graph
+implementation used by the pipeline, with and without the dilated context
+network, on GPU and CPU at the pipeline resolution. Results go to W&B
+(COLLISION_WANDB=0 to disable).
 
     python scripts/benchmark_flow.py --runs 50
 """
 
 import argparse
-import sys
 import time
-from pathlib import Path
 
 import numpy as np
 import ptlflow
 import torch
 from ptlflow.utils.io_adapter import IOAdapter
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "deploy" / "vitis_ai"))
-sys.path.insert(0, str(ROOT))
-from collision_avoidance.telemetry import start_run  # noqa: E402
-from pwcnet_dpu import PWCNetDPU, load_ptlflow_weights, preprocess  # noqa: E402
+from collision_avoidance.pwcnet import PWCNetDPU, load_ptlflow_weights, preprocess
+from collision_avoidance.telemetry import start_run
 
 H, W = 384, 512
 

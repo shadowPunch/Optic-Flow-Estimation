@@ -50,6 +50,7 @@ class EgoMotionConfig:
     # Legacy sampled theta from the same +-3 range as translation (+-172 deg);
     # the HLS port narrowed it, and so do we.
     rotation_range_rad: float = 0.05
+    downscale: int = 2  # search on 1/downscale-size frames (~4x cheaper at 2)
     seed: int | None = 0
 
 
@@ -72,6 +73,7 @@ class PipelineConfig:
     yolo_weights: str = "yolov9t.pt"
     flow_model: str = "pwcnet"  # ptlflow name; 'pwcnet' is PWC-DC-Net
     flow_checkpoint: str = "things"
+    flow_backend: str = "native"  # "native" (DPU graph, faster) or "ptlflow" (reference)
     frame_width: int = 512
     frame_height: int = 384
     device: str = "auto"

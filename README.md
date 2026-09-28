@@ -65,7 +65,7 @@ camera frame (resized to 512x384)
 ```bash
 uv venv --python 3.12 && uv pip install -e '.[dev]'   # CUDA 12.4 wheels; ptlflow needs Python < 3.13
 # exact versions used for the reported runs: requirements-lock.txt
-.venv/bin/python -m pytest                              # 23 tests
+.venv/bin/python -m pytest                              # 27 tests
 
 # Run on a video (or --source 0 for a webcam). Weights download on first use.
 .venv/bin/python -m collision_avoidance --source clip.mp4
@@ -82,20 +82,24 @@ be reached, runs stop with an error instead of silently going untracked.
 ## Host performance
 
 Headless run of `00049.mp4` (Nexar dash-cam clip), 300 frames, RTX 3050 Ti
-laptop GPU (W&B run `z14jtv2f`):
+laptop GPU. "Original" is the refactored pipeline with the 2025 settings;
+"current" uses the native PWC-Net backend and ego-motion search at half
+resolution (W&B runs `z14jtv2f` -> `tbu7x852`):
 
-| Stage | mean | p50 | p95 |
-|---|---|---|---|
-| PWC-DC-Net flow | 48.5 ms | 47.5 ms | 54.3 ms |
-| ego-motion (search every 15th frame) | 22.7 ms | 3.6 ms | 288 ms |
-| YOLOv9t detection | 12.3 ms | 12.2 ms | 13.2 ms |
-| tracking | 0.3 ms | 0.3 ms | 0.4 ms |
-| TTC (heuristic) | 2.8 ms | 2.7 ms | 4.1 ms |
-| **total** | **87.1 ms** | **66.6 ms** | **352 ms** |
+| Stage | original mean | current mean | current p50 | current p95 |
+|---|---|---|---|---|
+| PWC-DC-Net flow | 48.5 ms | 35.4 ms | 32.9 ms | 36.6 ms |
+| ego-motion (search every 15th frame) | 22.7 ms | 8.9 ms | 3.1 ms | 83.5 ms |
+| YOLOv9t detection | 12.3 ms | 13.1 ms | 12.7 ms | 16.3 ms |
+| tracking | 0.3 ms | 0.3 ms | 0.3 ms | 0.4 ms |
+| TTC (heuristic) | 2.8 ms | 3.4 ms | 3.2 ms | 5.1 ms |
+| **total** | **87.1 ms** | **61.8 ms** | **52.7 ms** | **132 ms** |
 
 The 2025 report measured ~120 ms/frame against a 30-40 ms target. Flow is
-the bottleneck; the ego-motion search causes the periodic spikes. Flow-model
-comparisons (including the DPU graph variants) are in
+still the largest stage; the ego-motion search still causes a spike every
+15th frame. `flow_backend="ptlflow"` in `PipelineConfig` switches back to the
+reference flow implementation (identical output, see `tests/test_pwcnet.py`).
+Flow-model comparisons are in
 [deploy/vitis_ai/README.md](deploy/vitis_ai/README.md).
 
 ## TTC estimation
@@ -137,7 +141,9 @@ which motivated the ESN.
   track-id continuity. Video and ground truth are aligned per sequence with the
   rigid-target constraint `bbox_width * distance = const` (fitted offsets
   0 to -0.17 s, residual spread 1-3 %; implied target widths 2.3 m for CCRs-1
-  and 1.8 m for CCRs-2, consistent within each target car).
+  and 1.8 m for CCRs-2, consistent within each target car). Features were
+  extracted with the ptlflow flow backend; the now-default native backend
+  matches it to < 0.001 px mean end-point error.
 
 #### ESN TTC results
 
@@ -178,7 +184,9 @@ deviations from the original script, both covered by tests:
 1. theta was sampled from +-3 rad (the translation range); it is now
    +-0.05 rad with its own mutation scale, as in the HLS port;
 2. the rotational part of the induced flow had the wrong sign for OpenCV's
-   rotation matrix.
+   rotation matrix;
+3. the search runs on half-resolution frames (`EgoMotionConfig.downscale`),
+   about 3x cheaper; recovery accuracy is tested at both resolutions.
 
 It models translation and in-plane rotation only, not the forward-motion
 expansion that dominates in driving.

@@ -9,7 +9,7 @@ H and W must be multiples of 64. Use `postprocess` to get full-size flow.
 
 Only depends on torch/numpy so it runs inside the Vitis AI docker (py3.8).
 Deployment note: warping (grid_sample) and correlation (unfold) are not DPU
-operators; the Vitis AI compiler places them on the CPU. See README.md.
+operators; the Vitis AI compiler places them on the CPU. See deploy/vitis_ai/README.md.
 """
 
 from __future__ import annotations
