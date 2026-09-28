@@ -1,0 +1,30 @@
+# Environments
+.venv/
+myenv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Model weights and checkpoints (see README "Model weights" for provenance)
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.xmodel
+*.onnx
+!yolov9t.pt
+
+# Data and generated outputs
+data/
+outputs/
+wandb/
+*.mp4
+*.zip
+calibration_images/
+
+# Pre-reconstruction working directories kept locally for reference
+PWC/
+onnx_pwc/
+quant_output_pwc/
+quant_output_yolo/
+conversion.py

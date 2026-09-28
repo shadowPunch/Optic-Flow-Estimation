@@ -1,0 +1,36 @@
+{
+  "source": "https://nail-hnu.github.io/EvTTC/download/download/",
+  "sequences": {
+    "CCRs-1-low-100%": {
+      "video": "1YWfKlHUDGMjsOVMujKhfXJpkRchAkC1L",
+      "video_size": "264.6 M",
+      "gt_ttc": "1l5_doDb30GsscNAtJquthr96RYZUXGBy",
+      "annotations_folder": "1S7DyV-O4NwYkAOJtsQNdapjIHbYb4weN"
+    },
+    "CCRs-1-medium-100%": {
+      "video": "1kMuMzFHmbHhkMl_7FHHacwoqnJ7roy-i",
+      "video_size": "242.9 M",
+      "gt_ttc": "1cTwpIZIsRucXClgz8loDjxfaCFMGzN9C",
+      "annotations_folder": "1zj7Xhi7OlkB5YZMd1lHGSk2Bd9PTad91"
+    },
+    "CCRs-1-high-100%": {
+      "video": "1DZYcdByXnnsIiB90ckz3BEhihGKfahdE",
+      "video_size": "264.6 M",
+      "gt_ttc": "1wal9fIaBpnUwsqnNiW-2yLPGq2uNC4ES",
+      "annotations_folder": "1XF2CdDPeL3w3fQ1gukftJ_j-6rl7eNZ9"
+    },
+    "CCRs-2-low-100%": {
+      "video": "1zM6Ypz5dn7y4XwumKTqQf77z7BrA0djv",
+      "video_size": "324.9 M",
+      "gt_ttc": "13Kv8s6lR0RBDB5VnadbdUhuGNASHBSY8",
+      "annotations_folder": "1WucumAr0_DslG7pRVJ8mJzuRIiIVpPbQ"
+    },
+    "CCRs-2-high-100%": {
+      "video": "137_nGJP-QQYIbhMmAWDbb0XuGvXrz44J",
+      "video_size": "431.5 M",
+      "gt_ttc": "1GUmIGGE7GYo7UEc9Lvq2PvIkRpSHMup9",
+      "annotations_folder": "1E-0OW7ENHRHUT1lobQRbImpKzaLQpGKL"
+    }
+  },
+  "note": "Subset used for the reported ESN results. Further sequences (e.g. CCRm moving-car, CPLA/CPNA pedestrian) can be added from the source page with the same fields."
+}

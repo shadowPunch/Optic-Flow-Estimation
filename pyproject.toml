@@ -1,0 +1,43 @@
+[project]
+name = "kria-collision-avoidance"
+version = "0.2.0"
+description = "Optical-flow based collision avoidance (PWC-Net + YOLOv9t + TTC/ESN) targeting the AMD Kria KV260"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"  # ptlflow 0.4.1 does not support 3.13+
+dependencies = [
+    "torch>=2.4,<2.7",
+    "torchvision>=0.19,<0.22",
+    "ptlflow==0.4.1",
+    "ultralytics>=8.3,<8.4",
+    "opencv-python>=4.8,<4.11",
+    "numpy>=1.26,<2.2",
+    "scipy>=1.11,<1.15",
+    "pandas>=2.0,<2.3",
+    "wandb>=0.18",
+    "gdown>=5.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+collision-avoidance = "collision_avoidance.app:main"
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+torchvision = { index = "pytorch-cu124" }
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["collision_avoidance*", "ttc_esn*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
