@@ -1,6 +1,5 @@
 # Environments
 .venv/
-myenv/
 __pycache__/
 *.pyc
 *.egg-info/
@@ -22,9 +21,7 @@ wandb/
 *.zip
 calibration_images/
 
-# Pre-reconstruction working directories kept locally for reference
+runs/
+
+# Pre-reconstruction ptlflow clone with the Nexar demo clips (kept locally; tests use 00049.mp4)
 PWC/
-onnx_pwc/
-quant_output_pwc/
-quant_output_yolo/
-conversion.py
