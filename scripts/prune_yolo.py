@@ -13,6 +13,7 @@ The fine-tuned checkpoint is written to --out.
 
 import argparse
 import copy
+import gc
 import shutil
 import sys
 from pathlib import Path
@@ -20,8 +21,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import torch  # noqa: E402
 from ultralytics import YOLO, settings  # noqa: E402
 from ultralytics.models.yolo.detect import DetectionTrainer  # noqa: E402
+from ultralytics.utils.torch_utils import strip_optimizer  # noqa: E402
 
 from collision_avoidance import yolo_pruning  # noqa: E402
 from collision_avoidance.telemetry import start_run  # noqa: E402
@@ -35,11 +38,20 @@ class PrunedModelTrainer(DetectionTrainer):
     def get_model(self, cfg=None, weights=None, verbose=True):
         return self.pruned_model
 
+    def final_eval(self):
+        """Only strip optimizer state. Ultralytics' final validation writes and scores a COCO-json
+        (several GB of RAM) while the training dataloaders still hold memory, which got the process
+        OOM-killed on both Colab and a 14 GB laptop; main() evaluates best.pt afterwards instead."""
+        for ckpt in (self.last, self.best):
+            if ckpt.exists():
+                strip_optimizer(ckpt)
+
 
 def evaluate(model_or_path, data: str, imgsz: int, device, batch: int) -> dict[str, float]:
     # val() fuses layers and leaves inference tensors behind, so always evaluate a copy.
     yolo = YOLO(model_or_path) if isinstance(model_or_path, (str, Path)) else copy.deepcopy(model_or_path)
-    m = yolo.val(data=data, imgsz=imgsz, device=device, batch=batch, plots=False, verbose=False).box
+    # val=False stops Ultralytics from forcing the memory-hungry COCO-json scoring on COCO data.
+    m = yolo.val(data=data, imgsz=imgsz, device=device, batch=batch, plots=False, verbose=False, val=False, save_json=False).box
     return {"map50_95": float(m.map), "map50": float(m.map50)}
 
 
@@ -95,11 +107,14 @@ def main(argv=None):
     }))
     trainer.train()
 
-    best = Path(trainer.best)
-    final_metrics = evaluate(str(best), args.data, args.imgsz, args.device, args.batch)
+    # Save the result first, then free the training dataloaders before the final evaluation.
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(best, out)
+    shutil.copy(trainer.best, out)
+    del trainer, pruned, pruned_yolo
+    gc.collect()
+    torch.cuda.empty_cache()
+    final_metrics = evaluate(str(out), args.data, args.imgsz, args.device, args.batch)
     summary = {
         **{f"original/{k}": v for k, v in {**base_metrics, **base_cost}.items()},
         **{f"pruned_no_ft/{k}": v for k, v in {**pruned_metrics, **pruned_cost}.items()},

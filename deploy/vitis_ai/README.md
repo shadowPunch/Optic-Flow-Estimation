@@ -1,74 +1,101 @@
 # Vitis AI deployment (KV260 DPU)
 
-Status: **scripts written and host-verified, not yet run in Vitis AI.** The
-quantizer and compiler only ship in the Vitis AI docker image, which was not
-available when this was reconstructed, and no KV260 board was attached. Every
-number below that says "host" was measured on the development laptop; nothing
-here has produced an `.xmodel` yet.
+Toolchain: Vitis AI 3.5 PyTorch docker (`xilinx/vitis-ai-pytorch-cpu:ubuntu2004-3.5.0.306`,
+`pytorch_nndct 3.5.0+torch1.13.1` - the same build that produced the 2025 quantization
+files). Target `DPUCZDX8G_ISA1_B4096` (the image's KV260 `arch.json`). No KV260 board was
+available, so on-device latency is not measured.
 
-## What is here
+## Files
 
-| File | Purpose | Verified on host |
-|---|---|---|
-| `../../collision_avoidance/pwcnet.py` | PWC-DC-Net as a plain `nn.Module` (tensor in/out, `nn.Unfold` correlation); shared with the host pipeline, which uses it as its default flow backend | output matches ptlflow `pwcnet` / `pwcnet_nodc` to mean EPE < 1e-3 (`tests/test_pwcnet.py`) |
-| `yolo_dpu.py` | YOLOv9t graph up to the Detect-head convolutions; CPU decode + NMS | decoded output matches Ultralytics to 1e-3 (`tests/test_yolo_dpu.py`) |
-| `quantize.py` | `inspect` / `calib` / `test` (evaluate vs float + export xmodel) | data sampling and model wrappers smoke-tested; quantizer calls need the docker |
-| `compile.sh` | `vai_c_xir` for the KV260 arch + subgraph report | no |
+| File | Purpose |
+|---|---|
+| `Dockerfile` | Vitis AI image + Ultralytics/W&B, numpy and torch pinned to the builds `pytorch_nndct` was compiled against |
+| `run_docker.sh` | runs a command in the image with the repo at `/workspace`, W&B credentials and the torch hub cache mounted |
+| `quantize.py` | `inspect` / `calib` / `test` (evaluate vs float, export `.xmodel`) for `pwcnet` and `yolov9t` |
+| `compile.sh` | `vai_c_xir` for the KV260 + subgraph report |
+| `yolo_dpu.py` | YOLOv9t graph up to the Detect-head convolutions; CPU decode + NMS |
+| `../../collision_avoidance/pwcnet.py` | PWC-DC-Net as a plain `nn.Module`; shared with the host pipeline |
+| `../../collision_avoidance/yolo_pruning.py`, `../../scripts/prune_yolo.py` | Hardswish swap + channel pruning + fine-tuning (Colab notebook in `notebooks/`) |
 
-## Fixes relative to the pre-reconstruction attempt (`onnx_pwc/`)
-
-1. **Wrong network.** The pipeline runs ptlflow `pwcnet`, which is
-   **PWC-DC-Net** (dilated context network) with the *things* checkpoint. The
-   old DPU copy was plain PWC-Net with *sintel* weights.
-2. **Double LeakyReLU** after correlation (inside the layer and again in
-   `forward`), changing the cost volume.
-3. **Missing warp mask**: ptlflow zeroes warped features sampled outside the image.
-4. **Channel order**: calibration fed RGB to a model that ptlflow feeds BGR
-   (plain PWC-Net) / RGB (PWC-DC-Net). `preprocess(..., to_rgb=model.dc)` now
-   encodes this.
-5. **Resolution mismatch**: calibration at 256x256, export at 384x448. Both
-   now use the pipeline size 384x512 (multiple of 64 as PWC-Net requires).
-
-## Run it
+## Run
 
 ```bash
-docker pull xilinx/vitis-ai-pytorch-cpu:ubuntu2004-3.5.0.306
-docker run -it --rm -v "$PWD":/workspace xilinx/vitis-ai-pytorch-cpu:ubuntu2004-3.5.0.306
-# inside the container
-conda activate vitis-ai-pytorch
-pip install "ultralytics>=8.3,<8.4" wandb     # yolov9t wrapper + tracking (or export COLLISION_WANDB=0)
-cd /workspace/deploy/vitis_ai
-CLIPS="../../data/evttc/*/video.mp4"           # or any dash-cam clips
-
+docker build -t kria-vitis-ai:3.5 deploy/vitis_ai
+CLIPS=$(ls PWC/ptlflow/*.mp4 | sed 's|^|../../|')      # dash-cam clips for calibration
 for m in pwcnet yolov9t; do
-  python quantize.py --model $m --mode inspect --videos $CLIPS   # which ops land on the DPU
-  python quantize.py --model $m --mode calib   --videos $CLIPS
-  python quantize.py --model $m --mode test    --videos $CLIPS   # prints quantized-vs-float error, writes *_int.xmodel
+  deploy/vitis_ai/run_docker.sh python quantize.py --model $m --mode inspect --videos $CLIPS
+  deploy/vitis_ai/run_docker.sh python quantize.py --model $m --mode calib   --videos $CLIPS
+  deploy/vitis_ai/run_docker.sh python quantize.py --model $m --mode test    --videos $CLIPS
 done
-./compile.sh                                   # -> compiled/<model>/<model>_kv260.xmodel + subgraphs.txt
+deploy/vitis_ai/run_docker.sh ./compile.sh            # -> compiled/<model>/<model>_kv260.xmodel + subgraphs.txt
 ```
 
-EvTTC videos are 2x2 mosaics; for calibration that is acceptable (realistic
-road texture), but cropping to the left RGB panel is closer to deployment.
+For the DPU-ready detector pass `--yolo-weights ../../outputs/models/yolov9t_pruned.pt`
+(produced by `scripts/prune_yolo.py`, locally or with the Colab notebook).
 
-## Expected problems (check the `inspect` report first)
+## What the inspector found
 
-* **PWC-Net partitioning.** `grid_sample` (warping, 4 levels) and the
-  unfold-based correlation (5 levels) are not DPUCZDX8G operators, so the
-  graph is expected to split into many DPU/CPU segments (one pair per pyramid
-  level or more; `inspect` / `subgraphs.txt` will show the real count). The float correlation is
-  also the slowest CPU op on the host (the unfold variant takes 251 ms vs
-  182 ms for ptlflow's on the laptop CPU), so on the Cortex-A53 it will likely
-  dominate. Options: run only the feature pyramid on the DPU, or a DPU-friendly
-  correlation (e.g. correlation expressed as grouped 1x1 convolutions over
-  shifted inputs).
-* **YOLOv9t activations.** The model uses SiLU (237 instances in the old
-  quantized graph). DPUCZDX8G does not implement SiLU/sigmoid, so each would
-  fall back to the CPU. The usual fix is swapping SiLU for Hardswish or
-  LeakyReLU and fine-tuning before quantization (quantization-aware training
-  is also available in `pytorch_nndct`).
-* **DPU target name.** `quantize.py` uses `DPUCZDX8G_ISA1_B4096`; confirm it
-  matches the bitstream loaded on the board with `xdputil query`.
+**PWC-Net: LeakyReLU slope.** The DPU implements LeakyReLU only with slope
+26/256 = 0.1015625. PWC-Net is trained with 0.1, and with 0.1 every one of its 134
+conv + activation pairs was assigned to the CPU (the 2025 quantization used 0.1 too).
+The deploy graph therefore uses 26/256 (`pwcnet.set_leaky_slope`). Float-model effect on
+60 dash-cam frame pairs: mean end-point error 0.073 px (typical flow magnitude 2 px),
+worst frame 0.93 px. What still runs on the CPU is the backward warp (`grid_sample`,
+masks) and the correlation (`im2col`, channel mean) at each of the five pyramid levels.
+
+**YOLOv9t: SiLU.** All 179 SiLU activations cannot be converted for the DPU (each also
+forces layout permutes around it). Swapping SiLU for Hardswish leaves only the ELAN
+`chunk` slices on the CPU, and after the pruning rewrite (which removes the chunks) the
+inspector reports **"All the operators are assigned to the DPU."** The swap changes the
+function, so it is fine-tuned together with pruning (`notebooks/prune_yolov9t_colab.ipynb`).
+
+## Other fixes relative to the 2025 attempt
+
+1. Wrong network: the pipeline runs PWC-**DC**-Net ("things" weights); the old copy was
+   plain PWC-Net with "sintel" weights.
+2. Double LeakyReLU after correlation; missing warp mask.
+3. Channel order: calibration fed RGB where ptlflow feeds plain PWC-Net BGR.
+4. Resolution: calibration at 256x256, export at 384x448. Now 384x512 throughout.
+
+## Results (Sept 2026)
+
+Calibration: 200 samples, evaluation: 48-50 disjoint samples, both from the eight Nexar
+dash-cam clips at 384x512. All runs are in W&B (job types `quantize-calib` / `quantize-test`).
+
+| Model | Quantized vs float | Compiled for KV260 | Top-level subgraphs |
+|---|---|---|---|
+| PWC-DC-Net (LeakyReLU 26/256) | EPE 0.95 px (float flow on the eval pairs averages 0.72 px) | yes, `pwcnet_kv260.xmodel` 13 MB | 11 DPU + 10 CPU (warp + correlation per pyramid level) |
+| YOLOv9t, original (SiLU) | raw head MAE 0.34 | **no**: compiler aborts, `Op_type 18 is invalid for xcompiler` | - |
+| YOLOv9t, pruned 30 % + Hardswish, fine-tuned | detection F1 vs float 0.76 (raw head MAE 0.45) | **yes**, `yolov9t_kv260.xmodel` 3.8 MB | **1 DPU (whole network)** + 3 CPU output transfers |
+
+PWC-Net with Vitis AI fast-finetune (AdaQuant) was started but stopped after ~11 h at 47/81
+layers (projected ~15 h more on CPU), so only the plain post-training result above exists.
+
+### Pruned YOLOv9t accuracy (COCO val2017, 640 px)
+
+| Model | mAP50-95 | mAP50 | GFLOPs | Params |
+|---|---|---|---|---|
+| Original YOLOv9t (SiLU) | 0.378 | 0.524 | 8.40 | 2.13 M |
+| Hardswish + 30 % channel pruning, before fine-tuning | 0.000 | 0.000 | 4.53 | 1.12 M |
+| same, fine-tuned 20 epochs on 25 % of COCO train2017 | **0.158** | 0.242 | 4.53 | 1.12 M |
+
+Collision-relevant classes after fine-tuning (mAP50-95): person 0.36, bus 0.41, car 0.19,
+motorcycle 0.19, truck 0.12, bicycle 0.08. The fine-tune was repeated independently on a
+Colab T4 (0.159) and the local RTX 3050 Ti (0.158); both were still improving slowly at epoch
+20. W&B runs `t6m4gvia` (local) and `bzx6jvbb` (Colab).
+
+What this means:
+
+* **YOLOv9t cannot be deployed as trained.** SiLU makes the compiler abort; the
+  Hardswish + pruned variant maps the entire network onto one DPU subgraph and compiles.
+  The price is accuracy: 20 epochs on a quarter of COCO recover 0.158 of the original 0.378
+  mAP50-95, and INT8 keeps about three quarters of the float detections. More fine-tuning
+  (full COCO, more epochs), a lower pruning ratio or distillation from the original model
+  are the levers for recovering more.
+* **PWC-Net compiles, but post-training INT8 is not accurate enough for TTC.** An error of
+  about 1 px swamps the sub-pixel motion between consecutive 30 FPS frames, and the TTC
+  features are spatial derivatives of the flow. Quantization error accumulates through the
+  five coarse-to-fine levels, each of which feeds a quantized flow estimate into a CPU warp.
 
 ## Host float benchmark (`scripts/benchmark_flow.py`, RTX 3050 Ti laptop, 384x512)
 
@@ -78,10 +105,12 @@ road texture), but cropping to the left RGB panel is closer to deployment.
 | DPU-graph PWC-DC-Net (pipeline default) | 29.8 ms | 251 ms |
 | DPU-graph PWC-Net (no DC) | 25.1 ms | 209 ms |
 
-W&B run: `kria-collision-avoidance/uxtpuu6y`.
+The unfold-based correlation is slower than ptlflow's on the CPU; since correlation stays
+on the KV260's Cortex-A53 cores, it is the likely on-board bottleneck. W&B run `uxtpuu6y`.
 
-## Not reconstructed
+## Not done
 
-* **Pruning** (Vitis AI Optimizer) - no trace of the original configuration.
-* **On-board runner** (VART / Vitis AI Library app) and the original
-  "72 % inference-time reduction" measurement - need the board.
+* On-board latency (needs a KV260 and a VART runner), so the "72 % inference-time
+  reduction" figure is still unverified.
+* The Vitis AI Optimizer was not used for pruning; channel pruning is done with
+  Torch-Pruning plus fine-tuning on a Colab GPU instead (the Vitis image here is CPU-only).

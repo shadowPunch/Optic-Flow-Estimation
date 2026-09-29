@@ -28,4 +28,4 @@ PWC/
 
 # Vitis AI outputs (xmodels are build artifacts)
 deploy/vitis_ai/quantized*/
-deploy/vitis_ai/compiled/
+deploy/vitis_ai/compiled*/
