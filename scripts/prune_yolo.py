@@ -87,7 +87,10 @@ def main(argv=None):
     model = YOLO(args.weights).model.float()
     if args.act == "hardswish":
         model = yolo_pruning.replace_silu(model)
-    pruned = yolo_pruning.prune(model, args.ratio, args.imgsz) if args.ratio > 0 else model
+    if args.ratio > 0:
+        pruned = yolo_pruning.prune(model, args.ratio, args.imgsz)
+    else:  # no pruning: still split the chunked ELAN convs (exact) so every op maps to the DPU
+        pruned = yolo_pruning.split_elan_blocks(model)
     pruned_cost = yolo_pruning.complexity(pruned, args.imgsz)
     pruned_yolo = YOLO(args.weights)
     pruned_yolo.model = pruned
