@@ -68,6 +68,8 @@ def main(argv=None):
     p.add_argument("--optimizer", default="SGD", help="explicit: Ultralytics' 'auto' ignores lr0 on short runs")
     p.add_argument("--lr0", type=float, default=0.01)
     p.add_argument("--warmup-epochs", type=float, default=1.0)
+    p.add_argument("--warmup-bias-lr", type=float, default=0.1,
+                   help="Ultralytics' default 0.1 suits training from scratch; use ~0 when fine-tuning a converged model")
     p.add_argument("--nbs", type=int, default=64, help="nominal batch for gradient accumulation (lower it for tiny smoke-test sets)")
     p.add_argument("--device", default=0)
     p.add_argument("--workers", type=int, default=8)
@@ -100,7 +102,7 @@ def main(argv=None):
     PrunedModelTrainer.pruned_model = pruned.train()
     trainer = PrunedModelTrainer(overrides=dict(
         model=args.weights, data=args.data, epochs=args.epochs, imgsz=args.imgsz, batch=args.batch,
-        optimizer=args.optimizer, lr0=args.lr0, warmup_epochs=args.warmup_epochs, nbs=args.nbs, fraction=args.fraction, device=args.device, workers=args.workers,
+        optimizer=args.optimizer, lr0=args.lr0, warmup_epochs=args.warmup_epochs, warmup_bias_lr=args.warmup_bias_lr, nbs=args.nbs, fraction=args.fraction, device=args.device, workers=args.workers,
         project=args.project, name="finetune", exist_ok=True, plots=False,
     ))
     trainer.add_callback("on_fit_epoch_end", lambda t: log({

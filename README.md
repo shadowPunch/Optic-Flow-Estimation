@@ -23,8 +23,8 @@ Vitis AI, custom kernels via Vitis HLS).
 | Heuristic TTC (divergence / flow magnitude / looming, 3:2:1) | Original |
 | ESN + MLP TTC model, 0-300 ms horizons | **Rebuilt** (`ttc_esn/`); original code, data prep and weights were lost - see [Results](#esn-ttc-results) |
 | PWC-Net / YOLOv9t DPU graphs | **Rebuilt and verified on host** against ptlflow / Ultralytics (`deploy/vitis_ai/`) |
-| Vitis AI quantization + KV260 compilation | **Done** (Vitis AI 3.5): YOLOv9t compiles as a single DPU subgraph after a SiLU -> Hardswish swap; PWC-Net compiles (11 DPU + 10 CPU subgraphs) but post-training INT8 is too inaccurate for TTC - see [deploy/vitis_ai/README.md](deploy/vitis_ai/README.md) |
-| Pruning | **Done** for YOLOv9t: 30 % channel pruning (-46 % GFLOPs) with Torch-Pruning + fine-tuning; accuracy drops from 0.378 to 0.158 mAP50-95 after 20 epochs |
+| Vitis AI quantization + KV260 compilation | **Done** (Vitis AI 3.5): YOLOv9t compiles as a single DPU subgraph after a SiLU -> Hardswish swap (0.317 mAP50-95, INT8 keeps 84 % of detections); PWC-Net compiles (11 DPU + 10 CPU subgraphs) but post-training INT8 is too inaccurate for TTC - see [deploy/vitis_ai/README.md](deploy/vitis_ai/README.md) |
+| Pruning | **Done** for YOLOv9t: 30 % channel pruning (-46 % GFLOPs) with Torch-Pruning + fine-tuning, but accuracy drops from 0.378 to 0.158 mAP50-95; the recommended DPU detector is the unpruned Hardswish variant (0.317) |
 | On-board DPU runner, "72 % inference-time reduction" | **Missing** - needs a KV260 |
 | HLS kernels (`hls/`) | Original drafts; not synthesised, known issues listed in [hls/README.md](hls/README.md) |
 

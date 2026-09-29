@@ -67,6 +67,7 @@ dash-cam clips at 384x512. All runs are in W&B (job types `quantize-calib` / `qu
 | PWC-DC-Net (LeakyReLU 26/256) | EPE 0.95 px (float flow on the eval pairs averages 0.72 px) | yes, `pwcnet_kv260.xmodel` 13 MB | 11 DPU + 10 CPU (warp + correlation per pyramid level) |
 | YOLOv9t, original (SiLU) | raw head MAE 0.34 | **no**: compiler aborts, `Op_type 18 is invalid for xcompiler` | - |
 | YOLOv9t, pruned 30 % + Hardswish, fine-tuned | detection F1 vs float 0.76 (raw head MAE 0.45) | **yes**, `yolov9t_kv260.xmodel` 3.8 MB | **1 DPU (whole network)** + 3 CPU output transfers |
+| **YOLOv9t, Hardswish only (recommended)** | detection F1 vs float 0.84 (raw head MAE 0.41) | **yes**, 4.8 MB | **1 DPU (whole network)** + 3 CPU output transfers |
 
 PWC-Net with Vitis AI fast-finetune (AdaQuant) was started but stopped after ~11 h at 47/81
 layers (projected ~15 h more on CPU), so only the plain post-training result above exists.
@@ -78,20 +79,29 @@ layers (projected ~15 h more on CPU), so only the plain post-training result abo
 | Original YOLOv9t (SiLU) | 0.378 | 0.524 | 8.40 | 2.13 M |
 | Hardswish + 30 % channel pruning, before fine-tuning | 0.000 | 0.000 | 4.53 | 1.12 M |
 | same, fine-tuned 20 epochs on 25 % of COCO train2017 | **0.158** | 0.242 | 4.53 | 1.12 M |
+| **Hardswish only (no pruning), no fine-tuning** | **0.317** | 0.458 | 8.40 | 2.13 M |
+| Hardswish only, fine-tuned (default Ultralytics warm-up) | 0.311 | 0.443 | 8.40 | 2.13 M |
+| Hardswish only, fine-tuned gently (lr 0.001, no warm-up), 5 epochs | 0.317 | - | 8.40 | 2.13 M |
 
-Collision-relevant classes after fine-tuning (mAP50-95): person 0.36, bus 0.41, car 0.19,
+Fine-tuning lessons: Ultralytics' default warm-up (bias learning rate 0.1) is meant for
+training from scratch; on the already-converged Hardswish model it collapsed mAP50-95 from
+0.317 to 0.081 in the first epoch, and 19 more epochs only recovered 0.311. With lr 0.001 and
+no warm-up the model holds 0.317 but does not improve, so on this data budget plain
+fine-tuning cannot close the gap to 0.378; distillation from the SiLU model or longer
+training on full COCO would be the next steps.
+
+Pruned model, collision-relevant classes after fine-tuning (mAP50-95): person 0.36, bus 0.41, car 0.19,
 motorcycle 0.19, truck 0.12, bicycle 0.08. The fine-tune was repeated independently on a
 Colab T4 (0.159) and the local RTX 3050 Ti (0.158); both were still improving slowly at epoch
 20. W&B runs `t6m4gvia` (local) and `bzx6jvbb` (Colab).
 
 What this means:
 
-* **YOLOv9t cannot be deployed as trained.** SiLU makes the compiler abort; the
-  Hardswish + pruned variant maps the entire network onto one DPU subgraph and compiles.
-  The price is accuracy: 20 epochs on a quarter of COCO recover 0.158 of the original 0.378
-  mAP50-95, and INT8 keeps about three quarters of the float detections. More fine-tuning
-  (full COCO, more epochs), a lower pruning ratio or distillation from the original model
-  are the levers for recovering more.
+* **YOLOv9t cannot be deployed as trained.** SiLU makes the compiler abort. Swapping in
+  Hardswish (with the exact ELAN rewrite) maps the whole network onto one DPU subgraph at
+  0.317 mAP50-95 (original 0.378) and INT8 keeps 84 % of its float detections - this is the
+  recommended detector. Pruning 30 % of channels halves the compute but drops accuracy to
+  0.158 after fine-tuning, so it is only worth it if the DPU turns out to be the bottleneck.
 * **PWC-Net compiles, but post-training INT8 is not accurate enough for TTC.** An error of
   about 1 px swamps the sub-pixel motion between consecutive 30 FPS frames, and the TTC
   features are spatial derivatives of the flow. Quantization error accumulates through the
