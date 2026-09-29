@@ -47,6 +47,24 @@ def sample_frames(videos: list[str], count: int, offset: int, pairs: bool) -> li
     return samples[:count]
 
 
+def detection_f1(pred: np.ndarray, ref: np.ndarray, iou_thr: float = 0.5) -> float:
+    """F1 of `pred` detections against `ref` (same class, IoU >= iou_thr, greedy by score)."""
+    if len(pred) == 0 and len(ref) == 0:
+        return 1.0
+    if len(pred) == 0 or len(ref) == 0:
+        return 0.0
+    import torchvision
+    ious = torchvision.ops.box_iou(torch.from_numpy(pred[:, :4]), torch.from_numpy(ref[:, :4])).numpy()
+    ious[pred[:, 5][:, None] != ref[:, 5][None, :]] = 0.0
+    matched = 0
+    for i in np.argsort(-pred[:, 4]):
+        j = int(np.argmax(ious[i]))
+        if ious[i, j] >= iou_thr:
+            ious[:, j] = 0.0  # each reference detection matches at most once
+            matched += 1
+    return 2.0 * matched / (len(pred) + len(ref))
+
+
 class ModelSpec:
     """Builds the float model, its input tensors and an output-error metric."""
 
@@ -72,10 +90,15 @@ class ModelSpec:
 
     def error(self, quant_out, float_out) -> dict[str, float]:
         if self.pairs:  # end-point error of the full-resolution flow
-            epe = torch.linalg.vector_norm(pwcnet.postprocess(quant_out) - pwcnet.postprocess(float_out), dim=1)
-            return {"epe_vs_float": float(epe.mean())}
+            float_flow = pwcnet.postprocess(float_out)
+            epe = torch.linalg.vector_norm(pwcnet.postprocess(quant_out) - float_flow, dim=1)
+            return {"epe_vs_float": float(epe.mean()), "float_flow_magnitude": float(torch.linalg.vector_norm(float_flow, dim=1).mean())}
+        import yolo_dpu
         diffs = [float((q - f).abs().mean()) for q, f in zip(quant_out, float_out)]
-        return {"raw_head_mae_vs_float": float(np.mean(diffs))}
+        head = self.model.head
+        q_det = yolo_dpu.nms(yolo_dpu.decode(quant_out, head))
+        f_det = yolo_dpu.nms(yolo_dpu.decode(float_out, head))
+        return {"raw_head_mae_vs_float": float(np.mean(diffs)), "detection_f1_vs_float": detection_f1(q_det, f_det)}
 
 
 def start_tracking(args):
@@ -98,6 +121,8 @@ def main():
     p.add_argument("--eval-samples", type=int, default=50)
     p.add_argument("--yolo-weights", default="../../yolov9t.pt")
     p.add_argument("--output-dir", default="quantized")
+    p.add_argument("--fast-finetune", action="store_true",
+                   help="AdaQuant-style weight-rounding optimisation during calib; reused automatically in test mode")
     args = p.parse_args()
 
     from pytorch_nndct.apis import Inspector, torch_quantizer
@@ -116,8 +141,15 @@ def main():
     quantizer = torch_quantizer(args.mode, spec.model, (spec.dummy_input(),), output_dir=str(out_dir), device=device, target=TARGET)
     qmodel = quantizer.quant_model
 
+    def forward_all(model, batch):
+        with torch.no_grad():
+            for sample in batch:
+                model(spec.to_input(sample))
+
     if args.mode == "calib":
         samples = sample_frames(args.videos, args.calib_samples, offset=0, pairs=spec.pairs)
+        if args.fast_finetune:
+            quantizer.fast_finetune(forward_all, (qmodel, samples))
         with torch.no_grad():
             for i, sample in enumerate(samples, 1):
                 qmodel(spec.to_input(sample))
@@ -127,6 +159,8 @@ def main():
         if run:
             run.summary.update({"calib_samples": len(samples)})
     else:
+        if args.fast_finetune:
+            quantizer.load_ft_param()
         # Disjoint from calibration frames (offset by a few frames into each clip segment).
         samples = sample_frames(args.videos, args.eval_samples, offset=7, pairs=spec.pairs)
         metrics = []

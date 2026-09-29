@@ -94,11 +94,13 @@ class PWCNetDPU(nn.Module):
     @staticmethod
     def warp(x, flow):
         """Backward-warp x by flow; zero where the sample falls outside the image (as ptlflow)."""
-        b, _, h, w = x.shape
-        ys, xs = torch.meshgrid(torch.arange(h, device=x.device), torch.arange(w, device=x.device), indexing="ij")
-        grid = torch.stack((xs, ys)).to(x.dtype).unsqueeze(0) + flow
-        gx = 2.0 * grid[:, 0] / max(w - 1, 1) - 1.0
-        gy = 2.0 * grid[:, 1] / max(h - 1, 1) - 1.0
+        # Sizes as Python ints and the grid built directly in [-1, 1]: XIR cannot export
+        # shape arithmetic or multi-output ops (meshgrid). linspace(-1, 1, w)[x] = 2x/(w-1) - 1.
+        h, w = int(x.shape[2]), int(x.shape[3])
+        base_x = torch.linspace(-1.0, 1.0, w, device=x.device, dtype=x.dtype).view(1, 1, w)
+        base_y = torch.linspace(-1.0, 1.0, h, device=x.device, dtype=x.dtype).view(1, h, 1)
+        gx = base_x + flow[:, 0] * (2.0 / max(w - 1, 1))
+        gy = base_y + flow[:, 1] * (2.0 / max(h - 1, 1))
         vgrid = torch.stack((gx, gy), dim=-1)
         output = F.grid_sample(x, vgrid, align_corners=True)
         mask = F.grid_sample(torch.ones_like(x), vgrid, align_corners=True)
