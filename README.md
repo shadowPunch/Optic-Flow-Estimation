@@ -1,210 +1,133 @@
-# Real-Time Collision Avoidance with Optical Flow (AMD Kria KV260)
+# Real-Time Collision Avoidance System with Optical Flow Estimation
 
 <img width="610" height="328" alt="pipeline output" src="https://github.com/user-attachments/assets/9b6cb728-117c-4f4e-b7de-2e142a578816" />
 
-A monocular collision-warning pipeline for vehicles: YOLOv9t finds and tracks
-road users, PWC-Net estimates dense optical flow, ego-motion is compensated,
-and a time-to-collision (TTC) is estimated per object, either with the
-original flow heuristics or with an Echo State Network (ESN) that also
-forecasts TTC 300 ms ahead. The target platform is the AMD Kria KV260 (DPU via
-Vitis AI, custom kernels via Vitis HLS).
+## Overview
 
-> **Reconstruction note (Sept 2026).** The original 2025 codebase was lost.
-> This repository was rebuilt from what survived: the pipeline script
-> (`legacy/`), HLS drafts, and partial Vitis AI quantization output. The
-> table below separates what is original, what was reconstructed and
-> verified, and what is still missing.
+A camera-based collision warning system for vehicles, built for the AMD Kria
+KV260. From a single dash-cam video stream it:
 
-## Status
+- **detects and tracks** road users with **YOLOv9t**,
+- computes **dense optical flow** with **PWC-Net**,
+- removes the vehicle's own motion (**ego-motion compensation**, GENEVO),
+- estimates each object's **time to collision (TTC)**, either with flow
+  heuristics or with an **Echo State Network** that also forecasts TTC
+  300 ms ahead,
+- raises a warning when the TTC of an object in front of the vehicle drops
+  below a threshold.
 
-| Component | State |
-|---|---|
-| Python pipeline (detection, tracking, flow, ego-motion, TTC, ROI warnings) | **Original, refactored** into `collision_avoidance/`; numerically identical TTC (parity test against `legacy/`) |
-| Heuristic TTC (divergence / flow magnitude / looming, 3:2:1) | Original |
-| ESN + MLP TTC model, 0-300 ms horizons | **Rebuilt** (`ttc_esn/`); original code, data prep and weights were lost - see [Results](#esn-ttc-results) |
-| PWC-Net / YOLOv9t DPU graphs | **Rebuilt and verified on host** against ptlflow / Ultralytics (`deploy/vitis_ai/`) |
-| Vitis AI quantization + KV260 compilation | **Done** (Vitis AI 3.5): YOLOv9t compiles as a single DPU subgraph after a SiLU -> Hardswish swap (0.317 mAP50-95, INT8 keeps 84 % of detections); PWC-Net compiles (11 DPU + 10 CPU subgraphs) but post-training INT8 is too inaccurate for TTC - see [deploy/vitis_ai/README.md](deploy/vitis_ai/README.md) |
-| Pruning | **Done** for YOLOv9t: 30 % channel pruning (-46 % GFLOPs) with Torch-Pruning + fine-tuning, but accuracy drops from 0.378 to 0.158 mAP50-95; the recommended DPU detector is the unpruned Hardswish variant (0.317) |
-| On-board DPU runner, "72 % inference-time reduction" | **Missing** - needs a KV260 |
-| HLS kernels (`hls/`) | Original drafts; not synthesised, known issues listed in [hls/README.md](hls/README.md) |
-
-## Architecture
+## Pipeline
 
 ```text
-camera frame (resized to 512x384)
-   |
-   +--> PWC-DC-Net optical flow (ptlflow, "things" weights) ----------+
-   |                                                                  |
-   +--> ego-motion: genetic search for (dx, dy, theta) every 15 frames |
-   |       -> subtract induced flow  <--------------------------------+
-   |
-   +--> YOLOv9t detection (collision-relevant COCO classes)
-   |       -> Kalman (constant velocity) + Hungarian IoU tracking,
-   |          flow-guided propagation through missed detections
-   |
-   +--> per track: TTC estimator
-   |       heuristic (default)  or  ESN: 17 flow features -> reservoir -> MLP
-   |
-   +--> ROI check: warn if TTC <= 1.12 s inside ROI, <= 0.56 s outside
+Video stream (30 FPS)
+    ↓
+Object detection (YOLOv9t)
+    ↓
+Object tracking (Kalman filter + Hungarian matching)
+    ↓
+Dense optical flow (PWC-Net)
+    ↓
+Ego-motion correction (GENEVO)
+    ↓
+TTC estimation (divergence / flow / looming heuristics, or ESN)
+    ↓
+Collision check against the region in front of the vehicle
+    ↓
+Annotated output frame
 ```
 
-| Module | Responsibility |
-|---|---|
-| `collision_avoidance/config.py` | All tunables; defaults are the original script's constants |
-| `collision_avoidance/pipeline.py` | Per-frame orchestration and stage timing (no I/O, testable) |
-| `collision_avoidance/flow.py`, `detection.py`, `tracking.py`, `ego_motion.py`, `ttc.py` | One stage each |
-| `collision_avoidance/app.py` | CLI: video/webcam, display, recording, latency summary |
-| `collision_avoidance/telemetry.py` | Weights & Biases runs for every entry point |
-| `ttc_esn/` | EvTTC download + sync, feature extraction, ESN model, training/CV, pipeline adapter |
-| `deploy/vitis_ai/` | DPU-friendly model graphs, quantize/compile scripts, runbook |
-| `hls/` | Vitis HLS kernels and C++ ports (drafts) |
-| `legacy/` | Original scripts, verbatim, for provenance and parity tests |
-| `docs/progress-report-2025.md` | The team's weekly log from 2025 |
+## Getting started
 
-## Quick start
+Requires Python 3.10-3.12 and, for real-time speed, an NVIDIA GPU.
 
 ```bash
-uv venv --python 3.12 && uv pip install -e '.[dev]'   # CUDA 12.4 wheels; ptlflow needs Python < 3.13
-# exact versions used for the reported runs: requirements-lock.txt
-.venv/bin/python -m pytest                              # 27 tests
-
-# Run on a video (or --source 0 for a webcam). Weights download on first use.
-.venv/bin/python -m collision_avoidance --source clip.mp4
-.venv/bin/python -m collision_avoidance --source clip.mp4 --ttc-model outputs/models/esn_ttc.pt
-.venv/bin/python -m collision_avoidance --source clip.mp4 --no-display --max-frames 300 --output out.mp4
+git clone https://github.com/shadowPunch/Optic-Flow-Estimation.git
+cd Optic-Flow-Estimation
+uv venv --python 3.12 && uv pip install -e '.[dev]'    # or: pip install -e '.[dev]'
 ```
 
-Keys: `ESC` quit, `P` pause, `R` real-time pacing, `E` toggle ego-motion, `S` save frames, `H` help.
+Run it on a video file, or pass a webcam index instead of a file:
 
-Every run is logged to Weights & Biases (project `kria-collision-avoidance`);
-set `COLLISION_WANDB=0` to run offline. If tracking is enabled and W&B cannot
-be reached, runs stop with an error instead of silently going untracked.
+```bash
+python -m collision_avoidance --source dashcam.mp4
+python -m collision_avoidance --source 0
+```
 
-## Host performance
+Model weights download automatically on first use. Useful options:
 
-Headless run of `00049.mp4` (Nexar dash-cam clip), 300 frames, RTX 3050 Ti
-laptop GPU. "Original" is the refactored pipeline with the 2025 settings;
-"current" uses the native PWC-Net backend and ego-motion search at half
-resolution (W&B runs `z14jtv2f` -> `tbu7x852`):
+| Option | Effect |
+|---|---|
+| `--ttc-model esn_ttc.pt` | use a trained ESN instead of the heuristic TTC ([how to train it](docs/methods.md#echo-state-network)) |
+| `--output out.mp4` | save the annotated video |
+| `--no-display --max-frames 300` | headless run with a latency summary |
+| `--no-ego` | turn off ego-motion compensation |
 
-| Stage | original mean | current mean | current p50 | current p95 |
-|---|---|---|---|---|
-| PWC-DC-Net flow | 48.5 ms | 35.4 ms | 32.9 ms | 36.6 ms |
-| ego-motion (search every 15th frame) | 22.7 ms | 8.9 ms | 3.1 ms | 83.5 ms |
-| YOLOv9t detection | 12.3 ms | 13.1 ms | 12.7 ms | 16.3 ms |
-| tracking | 0.3 ms | 0.3 ms | 0.3 ms | 0.4 ms |
-| TTC (heuristic) | 2.8 ms | 3.4 ms | 3.2 ms | 5.1 ms |
-| **total** | **87.1 ms** | **61.8 ms** | **52.7 ms** | **132 ms** |
+While the video plays: `ESC` quit, `P` pause, `E` toggle ego-motion, `S` save
+frames, `H` help.
 
-The 2025 report measured ~120 ms/frame against a 30-40 ms target. Flow is
-still the largest stage; the ego-motion search still causes a spike every
-15th frame. `flow_backend="ptlflow"` in `PipelineConfig` switches back to the
-reference flow implementation (identical output, see `tests/test_pwcnet.py`).
-Flow-model comparisons are in
-[deploy/vitis_ai/README.md](deploy/vitis_ai/README.md).
+Runs are logged to Weights & Biases. Set `COLLISION_WANDB=0` to run without
+an account. Run the tests with `pytest`.
 
-## TTC estimation
+## Results
 
-### Heuristic (original)
+| | |
+|---|---|
+| Speed on a laptop GPU (RTX 3050 Ti) | 62 ms per frame (2025 progress report: ~120 ms) |
+| TTC error, ESN, now / 300 ms ahead | 14-19 % / 18-22 % median (heuristic: 95 % / 81 %) |
+| Detector on the KV260 DPU | whole network on the DPU, 0.317 COCO mAP (original model 0.378) |
 
-For each tracked box, three estimates are fused with weights 3:2:1:
+The ESN is evaluated on car-rear approach scenarios from the
+[EvTTC](https://nail-hnu.github.io/EvTTC/) dataset. Details, baselines and the
+per-stage timing breakdown are in [docs/methods.md](docs/methods.md).
 
-* **divergence**: `1 / (median div(flow) * fps)`,
-* **flow magnitude**: pinhole distance from an assumed 1.5 m object and
-  f = 500 px, speed from the mean flow magnitude,
-* **looming**: radial flow around the box centre relative to box size.
+## Deploying to the Kria KV260
 
-Kept exactly as originally tuned, since the warning thresholds depend on it.
-Known limitations: the divergence of an approaching plane is `2/TTC`, so the
-first estimate is biased low by 2x; in the second, the assumed distance
-cancels out (`TTC = f / (|flow| * fps)`), so it measures lateral motion as
-much as approach. On EvTTC its median relative error is large (see below),
-which motivated the ESN.
+The models are quantized to INT8 and compiled with **Vitis AI 3.5** for the
+KV260's DPU. [deploy/vitis_ai/README.md](deploy/vitis_ai/README.md) has the
+Docker-based workflow and the findings:
 
-### ESN (rebuilt)
+- **YOLOv9t** needs its SiLU activations swapped for Hardswish before it can be
+  compiled at all; after that the entire network runs on the DPU.
+- **PWC-Net** compiles (warping and correlation run on the ARM CPU), but its
+  INT8 version is not yet accurate enough for TTC.
+- **Pruning**: 30 % channel pruning halves the detector's compute but costs
+  too much accuracy, so the unpruned Hardswish model is recommended.
 
-* **Features (17, per object per frame, `ttc_esn/features.py`)**: divergence
-  statistics, flow magnitude statistics, mean flow, a least-squares expansion
-  rate (flow = t + a (p - c)), its residual, bbox growth rate, bbox geometry,
-  and the heuristic inverse TTCs. All rates are per second, so a model
-  trained at 20 FPS applies at 30 FPS.
-* **Model (`ttc_esn/model.py`)**: 300-unit leaky reservoir (spectral radius
-  0.9, leak 0.3, 10 % density), frozen; a 2x64 MLP readout trained on
-  `[features, state]` to predict log TTC at +0, 0.1, 0.2 and 0.3 s. Only the
-  readout is trained. One reservoir state is kept per track in the live
-  pipeline (`ttc_esn/online.py`).
-* **Data (`ttc_esn/evttc.py`, `extract.py`)**: five EvTTC car-rear sequences,
-  CCRs-1 low/medium/high and CCRs-2 low/high (20 FPS video, 100 Hz ground
-  truth), listed in `ttc_esn/evttc_manifest.json`. Moving-car and pedestrian
-  scenarios are out of scope for this rebuild; add them to the manifest to
-  extend it. The deployed pipeline itself is run over the left RGB camera; the
-  target track is identified from the dataset's annotations by IoU and
-  track-id continuity. Video and ground truth are aligned per sequence with the
-  rigid-target constraint `bbox_width * distance = const` (fitted offsets
-  0 to -0.17 s, residual spread 1-3 %; implied target widths 2.3 m for CCRs-1
-  and 1.8 m for CCRs-2, consistent within each target car). Features were
-  extracted with the ptlflow flow backend; the now-default native backend
-  matches it to < 0.001 px mean end-point error.
+Custom FPGA kernels written with Vitis HLS are in [hls/](hls/README.md).
 
-#### ESN TTC results
+## Repository layout
 
-Leave-one-sequence-out cross-validation over the 5 sequences (each sequence is
-the test set once; 705 test frames at +0 s, 687 at +0.3 s). Metric: relative
-TTC error |pred - gt| / gt (the EvTTC metric). Baselines are extrapolated
-to future horizons assuming constant closing speed (TTC(t) - h).
+| Path | Contents |
+|---|---|
+| `collision_avoidance/` | the pipeline: detection, tracking, flow, ego-motion, TTC, CLI |
+| `ttc_esn/` | EvTTC data preparation, ESN training and evaluation |
+| `deploy/vitis_ai/` | quantization, compilation and DPU model graphs |
+| `hls/` | Vitis HLS kernels |
+| `scripts/`, `notebooks/` | benchmarks and YOLO pruning (local or Colab) |
+| `docs/` | methods and results, the 2025 progress log |
+| `legacy/` | the original 2025 scripts |
 
-| Method | median, now | median, +300 ms | mean, +300 ms | within 20 %, +300 ms |
-|---|---|---|---|---|
-| Legacy heuristic | 95 % | 81 % | 134 % | 4 % |
-| 1 / expansion rate (physics, single feature) | 20 % | 23 % | 27 % | 47 % |
-| MLP on features, no reservoir (3 seeds) | 23-26 % | 26-29 % | 38-45 % | 37-43 % |
-| **ESN + MLP (3 seeds)** | **14-19 %** | **18-22 %** | 27-28 % | 47-53 % |
+## Status and limitations
 
-What this supports:
+- The pipeline, TTC models and DPU compilation work and are tested on a PC.
+  They have **not yet been run on a KV260 board**, so on-device latency is
+  unmeasured.
+- The INT8 PWC-Net needs quantization-aware training before it can be used.
+- The ESN has only been trained on car-rear scenarios; pedestrians and moving
+  targets are untested.
+- The HLS kernels are drafts that have not been synthesised.
+- This repository was reconstructed in 2026 after the original codebase was
+  lost; the original scripts are kept in `legacy/`.
 
-* The learned model is ~4-5x more accurate than the original heuristic.
-* The reservoir matters: with identical features and readout, removing it
-  worsens every seed.
-* The gain over the best single physical feature is modest (a few points of
-  median error, equal on mean error) and comes from 5 closely related
-  scenarios. The "accurate trajectory prediction 300 ms ahead" claim should be
-  read as ~20 % median error at +300 ms on car-rear approaches; pedestrians
-  and moving targets are untested.
+## Contributors
 
-The shipped model is `outputs/models/esn_ttc.pt` (seed 0, fixed before
-seeing results; W&B `final-esn` run `ny714n30`, CV run `02k1obif`). In the
-live pipeline it costs 5.6 ms/frame on the laptop (W&B `zbup23uf`).
+- Shyam B Ganesh (https://github.com/sh-yamm)
+- Tanmay S Kushwaha (https://github.com/Tanmay-S-Kushwaha)
+- Prateek Ratan (https://github.com/Pratan1)
+- Daksh Pandey (https://github.com/D1729)
 
-## Ego-motion compensation
+## Acknowledgments
 
-A GENEVO-style genetic search ([Algorithms 18(1):19](https://doi.org/10.3390/a18010019))
-finds the rigid 2-D motion `(dx, dy, theta)` that best aligns consecutive
-grayscale frames, converts it to the flow it induces and subtracts it. Two
-deviations from the original script, both covered by tests:
-
-1. theta was sampled from +-3 rad (the translation range); it is now
-   +-0.05 rad with its own mutation scale, as in the HLS port;
-2. the rotational part of the induced flow had the wrong sign for OpenCV's
-   rotation matrix;
-3. the search runs on half-resolution frames (`EgoMotionConfig.downscale`),
-   about 3x cheaper; recovery accuracy is tested at both resolutions.
-
-It models translation and in-plane rotation only, not the forward-motion
-expansion that dominates in driving.
-
-## Data and weights
-
-| Item | Source | In git |
-|---|---|---|
-| `yolov9t.pt` | Ultralytics YOLOv9t (COCO) | yes |
-| PWC-DC-Net "things" | ptlflow release `pwcdcnet-things-cc223701.ckpt`, auto-downloaded | no |
-| EvTTC subset (5 sequences) | `python -m ttc_esn.evttc` (links in `ttc_esn/evttc_manifest.json`) | no (`data/`) |
-| ESN weights | `python -m ttc_esn.extract && python -m ttc_esn.train` -> `outputs/models/` | no |
-| Demo clips `000xx.mp4` | Nexar dash-cam collision dataset (Kaggle), local copies only | no |
-
-## Credits
-
-Other contributors: [Shyam B Ganesh](https://github.com/sh-yamm), [Tanmay S Kushwaha](https://github.com/Tanmay-S-Kushwaha),
-[Prateek Ratan](https://github.com/Pratan1), [Daksh Pandey](https://github.com/D1729).
-PWC-Net implementation and weights: [ptlflow](https://github.com/hmorimitsu/ptlflow).
-TTC data: [EvTTC](https://nail-hnu.github.io/EvTTC/).
+- **PWC-Net implementation and weights:** [ptlflow](https://github.com/hmorimitsu/ptlflow)
+- **TTC dataset:** [EvTTC](https://nail-hnu.github.io/EvTTC/)
+- **Ego-motion estimation:** [GENEVO](https://doi.org/10.3390/a18010019)
