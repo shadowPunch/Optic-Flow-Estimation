@@ -107,17 +107,6 @@ Custom FPGA kernels written with Vitis HLS are in [hls/](hls/README.md).
 | `docs/` | methods and results, the 2025 progress log |
 | `legacy/` | the original 2025 scripts |
 
-## Status and limitations
-
-- The pipeline, TTC models and DPU compilation work and are tested on a PC.
-  They have **not yet been run on a KV260 board**, so on-device latency is
-  unmeasured.
-- The INT8 PWC-Net needs quantization-aware training before it can be used.
-- The ESN has only been trained on car-rear scenarios; pedestrians and moving
-  targets are untested.
-- The HLS kernels are drafts that have not been synthesised.
-- This repository was reconstructed in 2026 after the original codebase was
-  lost; the original scripts are kept in `legacy/`.
 
 ## Contributors
 
